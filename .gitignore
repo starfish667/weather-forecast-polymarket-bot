@@ -9,6 +9,10 @@ logs/
 *.log
 .polybot_cache/
 *.sqlite
+*.sqlite3
 *.db
+*.session
+*.session-journal
 weather_trigger_state.json
 weather_monitor_state.json
+data/
