@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+logs/
+*.log
+.polybot_cache/
+*.sqlite
+*.db
+weather_trigger_state.json
+weather_monitor_state.json
