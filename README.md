@@ -84,6 +84,15 @@ $env:PYTHONPATH = "src"
 
 For every configured city-day, this command takes the latest public historical YES mark from the six hours before 12:00 UTC on the preceding day, chooses the three highest marks, and settles against the closed Polymarket event. Weather taker fees are included. Public historical asks and order-book depth are unavailable, so it is deliberately an optimistic rough estimate rather than an executable-fill backtest.
 
+To backtest the weather-model method instead, choose the market bucket nearest the preceding-day ECMWF forecast plus one neighboring bucket on each side:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot backtest-model-month
+```
+
+This uses the same `80c`, `85c`, and `90c` raw-cap comparison and the same historical-mark caveat. It maps Celsius forecasts to either Celsius or Fahrenheit Polymarket bucket labels before selecting the three neighboring outcomes.
+
 ## Live Weather Baskets
 
 `live-round` discovers active Polymarket Weather events for today and the next two days. For each configured city, it ranks all tradable outcomes by Polymarket's displayed YES probability and selects only the top three. It buys only when those three YES legs have a combined raw VWAP of at most `80c`.
