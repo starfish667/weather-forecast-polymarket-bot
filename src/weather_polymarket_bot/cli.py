@@ -26,6 +26,7 @@ from weather_polymarket_bot.market_backtest import (
     summarize_threshold,
 )
 from weather_polymarket_bot.model_market_backtest import run_model_market_backtest
+from weather_polymarket_bot.news_monitor import NewsReviewRound, run_news_review_round
 from weather_polymarket_bot.open_meteo import fetch_open_meteo_round
 from weather_polymarket_bot.parser import parse_forecasts
 from weather_polymarket_bot.storage import ForecastStore
@@ -316,6 +317,62 @@ async def model_market_backtest_month(args: argparse.Namespace) -> int:
     return 0
 
 
+def print_news_review(round_result: NewsReviewRound) -> None:
+    print(
+        f"News headlines: {round_result.headline_count}; active Polymarket events reviewed: "
+        f"{round_result.market_count}"
+    )
+    if round_result.feed_errors:
+        print(f"Feed errors: {' | '.join(round_result.feed_errors)}")
+    if round_result.review is None:
+        print("No new headline produced a market review. No order was created.")
+        return
+    review = round_result.review
+    print(f"AI research summary: {review.summary}")
+    if review.event_slugs:
+        print(f"Human review events: {', '.join(review.event_slugs)}")
+    if review.evidence:
+        print(f"Evidence: {' | '.join(review.evidence)}")
+    if review.uncertainties:
+        print(f"Uncertainties: {' | '.join(review.uncertainties)}")
+    print("Research only. No order was created.")
+
+
+async def news_review(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    feeds = args.feed or config.zero_zero.news_feeds
+    if not feeds:
+        raise RuntimeError("Provide --feed or set NEWS_FEEDS for AI news monitoring")
+    result = await run_news_review_round(config=config.zero_zero, feeds=feeds)
+    print_news_review(result)
+    return 0
+
+
+async def news_watch(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    feeds = args.feed or config.zero_zero.news_feeds
+    if not feeds:
+        raise RuntimeError("Provide --feed or set NEWS_FEEDS for AI news monitoring")
+    if args.interval_seconds < 30:
+        raise RuntimeError("--interval-seconds must be at least 30")
+    seen_headlines: set[str] = set()
+    rounds = 0
+    while args.max_rounds is None or rounds < args.max_rounds:
+        try:
+            result = await run_news_review_round(
+                config=config.zero_zero,
+                feeds=feeds,
+                seen_headlines=seen_headlines,
+            )
+            print_news_review(result)
+        except RuntimeError as error:
+            print(f"monitor error: {error}", file=sys.stderr)
+        rounds += 1
+        if args.max_rounds is None or rounds < args.max_rounds:
+            await asyncio.sleep(args.interval_seconds)
+    return 0
+
+
 async def live_round(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
     try:
@@ -474,6 +531,22 @@ def build_parser() -> argparse.ArgumentParser:
     model_market_backtest.set_defaults(
         func=lambda args: asyncio.run(model_market_backtest_month(args))
     )
+
+    news = subparsers.add_parser(
+        "news-review",
+        help="Review RSS headlines against active Polymarket events with 0-0.pro",
+    )
+    news.add_argument("--feed", action="append", help="RSS or Atom feed URL; may be repeated")
+    news.set_defaults(func=lambda args: asyncio.run(news_review(args)))
+
+    watch = subparsers.add_parser(
+        "news-watch",
+        help="Continuously run AI news research without creating orders",
+    )
+    watch.add_argument("--feed", action="append", help="RSS or Atom feed URL; may be repeated")
+    watch.add_argument("--interval-seconds", type=int, default=300)
+    watch.add_argument("--max-rounds", type=int, help="Stop after this many review rounds")
+    watch.set_defaults(func=lambda args: asyncio.run(news_watch(args)))
 
     live = subparsers.add_parser(
         "live-round",

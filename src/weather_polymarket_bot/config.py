@@ -119,6 +119,42 @@ class LiveTradingConfig:
 
 
 @dataclass(frozen=True)
+class ZeroZeroConfig:
+    api_key: str | None
+    base_url: str
+    model: str
+    timeout_seconds: float
+    news_feeds: list[str]
+    max_events: int
+    max_headlines_per_feed: int
+
+    @classmethod
+    def from_env(cls) -> "ZeroZeroConfig":
+        load_dotenv()
+        return cls(
+            api_key=os.getenv("ZERO_ZERO_API_KEY"),
+            base_url=os.getenv("ZERO_ZERO_BASE_URL", "https://api.0-0.pro/v1"),
+            model=os.getenv("ZERO_ZERO_MODEL", "gpt-5.5"),
+            timeout_seconds=float(os.getenv("ZERO_ZERO_TIMEOUT_SECONDS", "30")),
+            news_feeds=csv_list(os.getenv("NEWS_FEEDS"), ()),
+            max_events=int(os.getenv("AI_MONITOR_MAX_EVENTS", "50")),
+            max_headlines_per_feed=int(os.getenv("AI_MONITOR_MAX_HEADLINES_PER_FEED", "20")),
+        )
+
+    def validate_for_analysis(self) -> None:
+        if not self.api_key:
+            raise RuntimeError("ZERO_ZERO_API_KEY is required for AI news analysis")
+        if not self.base_url.startswith("https://"):
+            raise RuntimeError("ZERO_ZERO_BASE_URL must use HTTPS")
+        if self.timeout_seconds <= 0:
+            raise RuntimeError("ZERO_ZERO_TIMEOUT_SECONDS must be greater than 0")
+        if self.max_events < 1:
+            raise RuntimeError("AI_MONITOR_MAX_EVENTS must be at least 1")
+        if self.max_headlines_per_feed < 1:
+            raise RuntimeError("AI_MONITOR_MAX_HEADLINES_PER_FEED must be at least 1")
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     api_id: int | None
     api_hash: str | None
@@ -163,6 +199,7 @@ class AppConfig:
     open_meteo: OpenMeteoConfig
     backtest: BacktestConfig
     live: LiveTradingConfig
+    zero_zero: ZeroZeroConfig
     telegram: TelegramConfig
 
     @classmethod
@@ -173,5 +210,6 @@ class AppConfig:
             open_meteo=OpenMeteoConfig.from_env(),
             backtest=BacktestConfig.from_env(),
             live=LiveTradingConfig.from_env(),
+            zero_zero=ZeroZeroConfig.from_env(),
             telegram=TelegramConfig.from_env(),
         )

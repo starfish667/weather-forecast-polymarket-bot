@@ -115,3 +115,23 @@ $env:WEATHER_BOT_ENABLE_LIVE = "1"
 ```
 
 Live mode requires `POLYMARKET_PRIVATE_KEY` and optionally `POLYMARKET_WALLET_ADDRESS` in the environment. No secret is read during a dry scan. The three legs are submitted together, but Polymarket does not make the batch atomic; if a leg is rejected, the bot immediately FOK-sells any matched residual leg at its then-current best bid. Executed event slugs are saved in SQLite to prevent duplicate entries.
+
+## AI News Research
+
+`news-review` uses an OpenAI-compatible 0-0.pro Chat Completions endpoint to compare RSS or Atom headlines with active Polymarket events. It produces research and a short human-review list only: it cannot create, sign, or submit an order.
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:ZERO_ZERO_API_KEY = "your-0-0-pro-key"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot news-review `
+  --feed "https://example.com/feed.xml"
+```
+
+For continuous monitoring, run a bounded watch while testing:
+
+```powershell
+.\.venv\Scripts\python.exe -m weather_polymarket_bot news-watch `
+  --feed "https://example.com/feed.xml" --interval-seconds 300 --max-rounds 12
+```
+
+The monitor reviews the most active configured number of events, rather than trying to put every market into one model prompt. The LLM sees only public headlines and active event titles. It does not receive Polymarket credentials, and its output is treated as untrusted research rather than an order instruction. A failed feed is reported but does not stop the other feeds from being reviewed.
