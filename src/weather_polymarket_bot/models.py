@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 
@@ -38,3 +38,30 @@ class ForecastObservation:
     def buckets_c(self) -> list[int]:
         return nearby_buckets(self.forecast_c, radius=self.bucket_radius)
 
+
+@dataclass(frozen=True)
+class BacktestResult:
+    city: str
+    target_date: date
+    issued_at: datetime
+    forecast_c: Decimal
+    outcome_c: Decimal
+    source: str
+    model: str
+    bucket_radius: int = 1
+
+    @property
+    def forecast_bucket_c(self) -> int:
+        return celsius_bucket(self.forecast_c)
+
+    @property
+    def outcome_bucket_c(self) -> int:
+        return celsius_bucket(self.outcome_c)
+
+    @property
+    def buckets_c(self) -> list[int]:
+        return nearby_buckets(self.forecast_c, radius=self.bucket_radius)
+
+    @property
+    def won(self) -> bool:
+        return self.outcome_bucket_c in self.buckets_c

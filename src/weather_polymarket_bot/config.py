@@ -46,6 +46,40 @@ class OpenMeteoConfig:
 
 
 @dataclass(frozen=True)
+class BacktestConfig:
+    cities: list[str]
+    model: str
+    run_hour_utc: int
+    workers: int
+    single_run_endpoint: str
+    archive_endpoint: str
+
+    @classmethod
+    def from_env(cls) -> "BacktestConfig":
+        load_dotenv()
+        run_hour_utc = int(os.getenv("BACKTEST_RUN_HOUR_UTC", "12"))
+        if not 0 <= run_hour_utc <= 23:
+            raise RuntimeError("BACKTEST_RUN_HOUR_UTC must be between 0 and 23")
+        workers = int(os.getenv("BACKTEST_WORKERS", "2"))
+        if workers < 1:
+            raise RuntimeError("BACKTEST_WORKERS must be at least 1")
+        return cls(
+            cities=csv_list(os.getenv("FORECAST_CITIES"), DEFAULT_CITIES),
+            model=os.getenv("BACKTEST_MODEL", "ecmwf_ifs"),
+            run_hour_utc=run_hour_utc,
+            workers=workers,
+            single_run_endpoint=os.getenv(
+                "OPEN_METEO_SINGLE_RUN_ENDPOINT",
+                "https://single-runs-api.open-meteo.com/v1/forecast",
+            ),
+            archive_endpoint=os.getenv(
+                "OPEN_METEO_ARCHIVE_ENDPOINT",
+                "https://archive-api.open-meteo.com/v1/archive",
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     api_id: int | None
     api_hash: str | None
@@ -88,6 +122,7 @@ class TelegramConfig:
 class AppConfig:
     database_path: Path
     open_meteo: OpenMeteoConfig
+    backtest: BacktestConfig
     telegram: TelegramConfig
 
     @classmethod
@@ -96,5 +131,6 @@ class AppConfig:
         return cls(
             database_path=Path(os.getenv("DATABASE_PATH", "data/weather_forecasts.sqlite3")),
             open_meteo=OpenMeteoConfig.from_env(),
+            backtest=BacktestConfig.from_env(),
             telegram=TelegramConfig.from_env(),
         )

@@ -52,3 +52,16 @@ For a forecast such as `12.8C`, the first basket candidate is the rounded bucket
 ```
 
 The backtest database stores each forecast, the rounded center bucket, and the basket low/high bounds so later market-price snapshots can be joined against it.
+
+## Historical Backtest
+
+Run the previous complete calendar month (on 12 July 2026 this is 1-30 June):
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m weather_polymarket_bot backtest-month --verbose
+```
+
+The backtest uses the archived `ecmwf_ifs` run from 12:00 UTC on the prior day, derives the predicted local daily maximum from its hourly values, and settles against Open-Meteo archive daily maximum temperatures. It records every city-day in SQLite and reports the three-bucket hit rate plus its empirical fair all-in basket cost before fees.
+
+This is forecast-skill validation, not trading PnL: Polymarket historical asks, fills, and fees must be joined before the `80c` entry rule can be evaluated honestly.

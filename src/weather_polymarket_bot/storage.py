@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
-from weather_polymarket_bot.models import ForecastObservation
+from weather_polymarket_bot.models import BacktestResult, ForecastObservation
 
 
 SCHEMA = """
@@ -28,11 +28,45 @@ CREATE TABLE IF NOT EXISTS forecast_observations (
 
 CREATE INDEX IF NOT EXISTS idx_forecasts_city_fetched
 ON forecast_observations(city, fetched_at);
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    model TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    run_hour_utc INTEGER NOT NULL,
+    bucket_radius INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS backtest_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+    city TEXT NOT NULL,
+    target_date TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    forecast_c TEXT NOT NULL,
+    forecast_bucket_c INTEGER NOT NULL,
+    outcome_c TEXT NOT NULL,
+    outcome_bucket_c INTEGER NOT NULL,
+    bucket_low_c INTEGER NOT NULL,
+    bucket_high_c INTEGER NOT NULL,
+    won INTEGER NOT NULL CHECK (won IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_results_run
+ON backtest_results(run_id, city, target_date);
 """
 
 
 def encode_dt(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def encode_date(value: date) -> str:
+    return value.isoformat()
 
 
 class ForecastStore:
@@ -100,3 +134,70 @@ class ForecastStore:
             (limit,),
         )
         return list(cursor.fetchall())
+
+    def create_backtest_run(
+        self,
+        *,
+        source: str,
+        model: str,
+        start_date: date,
+        end_date: date,
+        run_hour_utc: int,
+        bucket_radius: int = 1,
+    ) -> int:
+        cursor = self.connection.execute(
+            """
+            INSERT INTO backtest_runs (
+                source, model, start_date, end_date, run_hour_utc, bucket_radius
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source,
+                model,
+                encode_date(start_date),
+                encode_date(end_date),
+                run_hour_utc,
+                bucket_radius,
+            ),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    def insert_backtest_results(
+        self,
+        *,
+        run_id: int,
+        results: Iterable[BacktestResult],
+    ) -> int:
+        rows = []
+        for result in results:
+            buckets = result.buckets_c
+            rows.append(
+                (
+                    run_id,
+                    result.city,
+                    encode_date(result.target_date),
+                    encode_dt(result.issued_at),
+                    str(result.forecast_c),
+                    result.forecast_bucket_c,
+                    str(result.outcome_c),
+                    result.outcome_bucket_c,
+                    buckets[0],
+                    buckets[-1],
+                    int(result.won),
+                )
+            )
+        self.connection.executemany(
+            """
+            INSERT INTO backtest_results (
+                run_id, city, target_date, issued_at, forecast_c,
+                forecast_bucket_c, outcome_c, outcome_bucket_c,
+                bucket_low_c, bucket_high_c, won
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        self.connection.commit()
+        return len(rows)

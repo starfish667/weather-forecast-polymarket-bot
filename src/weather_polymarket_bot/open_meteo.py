@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 from weather_polymarket_bot.config import OpenMeteoConfig
 from weather_polymarket_bot.models import ForecastObservation, utc_now
+
+
+class OpenMeteoHTTPError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"Open-Meteo request failed with HTTP {status_code}")
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -75,14 +83,33 @@ def build_forecast_url(
     return f"{config.endpoint}?{urllib.parse.urlencode(params)}"
 
 
-def fetch_json(url: str, *, timeout_seconds: float = 20.0) -> dict[str, Any]:
+def fetch_json(
+    url: str,
+    *,
+    timeout_seconds: float = 20.0,
+    retries: int = 4,
+) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "weather-forecast-polymarket-bot/0.1"},
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        data = response.read()
-    return json.loads(data.decode("utf-8"))
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                data = response.read()
+            return json.loads(data.decode("utf-8"))
+        except HTTPError as error:
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            retryable = error.code == 429 or 500 <= error.code < 600
+            if not retryable or attempt == retries:
+                raise OpenMeteoHTTPError(error.code) from error
+            delay_seconds = float(retry_after) if retry_after and retry_after.isdigit() else 2**attempt
+        except URLError as error:
+            if attempt == retries:
+                raise RuntimeError(f"Open-Meteo request failed: {error.reason}") from error
+            delay_seconds = 2**attempt
+        time.sleep(min(delay_seconds, 15))
+    raise AssertionError("unreachable")
 
 
 def observations_from_payload(
@@ -133,4 +160,3 @@ def fetch_open_meteo_round(config: OpenMeteoConfig) -> list[ForecastObservation]
             )
         )
     return observations
-

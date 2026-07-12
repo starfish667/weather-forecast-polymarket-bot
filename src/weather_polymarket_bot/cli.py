@@ -3,11 +3,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from weather_polymarket_bot.config import AppConfig
-from weather_polymarket_bot.models import nearby_buckets, utc_now
+from weather_polymarket_bot.backtest import (
+    parse_date,
+    previous_calendar_month,
+    run_backtest,
+    summarize,
+)
+from weather_polymarket_bot.models import BacktestResult, nearby_buckets, utc_now
 from weather_polymarket_bot.open_meteo import fetch_open_meteo_round
 from weather_polymarket_bot.parser import parse_forecasts
 from weather_polymarket_bot.storage import ForecastStore
@@ -54,6 +62,7 @@ async def telegram_round(args: argparse.Namespace) -> int:
         config = AppConfig(
             database_path=Path(args.db),
             open_meteo=config.open_meteo,
+            backtest=config.backtest,
             telegram=config.telegram,
         )
     replies = await fetch_weather_round(config.telegram)
@@ -113,6 +122,72 @@ def bucket(args: argparse.Namespace) -> int:
     return 0
 
 
+def print_backtest_summary(results: list[BacktestResult]) -> None:
+    summary = summarize(results)
+    print(f"Basket wins: {summary.wins}/{summary.total} ({summary.hit_rate:.1%})")
+    print(f"Empirical fair basket cost before fees: {summary.fair_basket_cost_cents:.1f}c")
+
+    city_results: dict[str, list[BacktestResult]] = defaultdict(list)
+    for result in results:
+        city_results[result.city].append(result)
+    for city, city_rows in sorted(city_results.items()):
+        city_summary = summarize(city_rows)
+        print(
+            f"{city}: {city_summary.wins}/{city_summary.total} "
+            f"({city_summary.hit_rate:.1%}), fair cost {city_summary.fair_basket_cost_cents:.1f}c"
+        )
+
+
+def backtest_month(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    start_date, end_date = previous_calendar_month(date.today())
+    if args.start:
+        start_date = parse_date(args.start)
+    if args.end:
+        end_date = parse_date(args.end)
+
+    results = run_backtest(
+        config=config.backtest,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    db_path = Path(args.db) if args.db else config.database_path
+    with ForecastStore(db_path) as store:
+        run_id = store.create_backtest_run(
+            source="open-meteo:single-run+archive",
+            model=config.backtest.model,
+            start_date=start_date,
+            end_date=end_date,
+            run_hour_utc=config.backtest.run_hour_utc,
+        )
+        stored = store.insert_backtest_results(run_id=run_id, results=results)
+
+    print(
+        f"Saved backtest #{run_id}: {stored} city-day basket(s), "
+        f"{start_date.isoformat()} through {end_date.isoformat()}"
+    )
+    print(
+        f"Forecast: {config.backtest.model}, issued at {config.backtest.run_hour_utc:02d}:00 UTC "
+        "on the preceding day; outcome: Open-Meteo archive daily maximum."
+    )
+    print_backtest_summary(results)
+    fallback_count = sum(
+        result.issued_at.hour != config.backtest.run_hour_utc for result in results
+    )
+    if fallback_count:
+        print(f"Used the same-day 00:00 UTC archive fallback for {fallback_count} unavailable 12:00 UTC run(s).")
+    if args.verbose:
+        for result in results:
+            status = "WIN" if result.won else "LOSS"
+            buckets = "/".join(f"{bucket}C" for bucket in result.buckets_c)
+            print(
+                f"{status} {result.city} {result.target_date}: forecast {result.forecast_c}C "
+                f"-> {buckets}; outcome {result.outcome_c}C ({result.outcome_bucket_c}C)"
+            )
+    print("This is forecast-skill only; PnL needs historical Polymarket asks and fees.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weather forecast Polymarket backtest tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -141,6 +216,16 @@ def build_parser() -> argparse.ArgumentParser:
     bucket_parser.add_argument("forecast_c")
     bucket_parser.add_argument("--radius", type=int, default=1)
     bucket_parser.set_defaults(func=bucket)
+
+    backtest = subparsers.add_parser(
+        "backtest-month",
+        help="Backtest the nearby-bucket rule for the prior calendar month",
+    )
+    backtest.add_argument("--start", help="Override start date (YYYY-MM-DD)")
+    backtest.add_argument("--end", help="Override end date (YYYY-MM-DD)")
+    backtest.add_argument("--db", help="SQLite database path")
+    backtest.add_argument("--verbose", action="store_true", help="Print every city-day result")
+    backtest.set_defaults(func=backtest_month)
     return parser
 
 
