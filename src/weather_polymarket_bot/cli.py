@@ -9,6 +9,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from polymarket.errors import PolymarketError
+
 from weather_polymarket_bot.config import AppConfig
 from weather_polymarket_bot.backtest import (
     parse_date,
@@ -193,10 +195,14 @@ def backtest_month(args: argparse.Namespace) -> int:
 
 async def live_round(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
-    quotes = await scan_live_baskets(
-        live_config=config.live,
-        forecast_config=config.open_meteo,
-    )
+    try:
+        quotes = await scan_live_baskets(
+            live_config=config.live,
+            forecast_config=config.open_meteo,
+        )
+    except PolymarketError as error:
+        print(f"Could not load Polymarket order books: {error}. No orders were submitted.")
+        return 1
     if not quotes:
         print("No active weather basket passed the 80c depth and budget rules.")
         return 0
@@ -205,8 +211,8 @@ async def live_round(args: argparse.Namespace) -> int:
     selected = quotes[:max_baskets]
     for quote in selected:
         print(
-            f"candidate {quote.city} {quote.target_date} forecast={quote.forecast_c}C "
-            f"buckets={quote.bucket_text} shares={quote.shares} "
+            f"candidate {quote.city} {quote.target_date} market-top3={quote.bucket_text} "
+            f"shares={quote.shares} "
             f"raw={quote.raw_cost_per_share:.4f} all-in={quote.all_in_cost_per_share:.4f} "
             f"total=${quote.all_in_cost:.2f}"
         )
@@ -224,7 +230,7 @@ async def live_round(args: argparse.Namespace) -> int:
                 event_slug=quote.event_slug,
                 target_date=quote.target_date,
                 city=quote.city,
-                forecast_c=str(quote.forecast_c),
+                forecast_c="market-top3",
                 bucket_text=quote.bucket_text,
                 shares=quote.shares,
                 raw_cost=str(quote.raw_cost),

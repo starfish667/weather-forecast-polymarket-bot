@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import urllib.parse
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
@@ -12,12 +11,8 @@ from typing import Iterable
 from polymarket import AsyncPublicClient, AsyncSecureClient
 
 from weather_polymarket_bot.config import LiveTradingConfig, OpenMeteoConfig
-from weather_polymarket_bot.models import nearby_buckets
-from weather_polymarket_bot.open_meteo import fetch_json
 
 
-GEOCODING_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
-EXACT_TEMPERATURE_RE = re.compile(r"^(-?\d+)°C$")
 WEATHER_EVENT_RE = re.compile(r"^Highest temperature in (?P<city>.+) on .+\?$")
 ZERO = Decimal("0")
 ONE = Decimal("1")
@@ -32,7 +27,7 @@ class AskLevel:
 
 @dataclass(frozen=True)
 class BasketLeg:
-    bucket_c: int
+    label: str
     token_id: str
     question: str
     asks: tuple[AskLevel, ...]
@@ -53,7 +48,6 @@ class BasketQuote:
     event_slug: str
     city: str
     target_date: date
-    forecast_c: Decimal
     shares: int
     legs: tuple[FilledLeg, ...]
     raw_cost: Decimal
@@ -73,7 +67,7 @@ class BasketQuote:
 
     @property
     def bucket_text(self) -> str:
-        return "/".join(f"{leg.leg.bucket_c}C" for leg in self.legs)
+        return "/".join(leg.leg.label for leg in self.legs)
 
 
 def floor_integer(value: Decimal) -> int:
@@ -82,14 +76,6 @@ def floor_integer(value: Decimal) -> int:
 
 def ceil_integer(value: Decimal) -> int:
     return int(value.to_integral_value(rounding=ROUND_CEILING))
-
-
-def exact_temperature_bucket(market: object) -> int | None:
-    title = getattr(market, "group_item_title", None)
-    if not isinstance(title, str):
-        return None
-    match = EXACT_TEMPERATURE_RE.fullmatch(title.strip())
-    return int(match.group(1)) if match else None
 
 
 def city_from_event(event: object) -> str | None:
@@ -107,6 +93,21 @@ def normalized_city(value: str) -> str:
 def event_target_date(event: object) -> date | None:
     schedule = getattr(event, "schedule", None)
     return getattr(schedule, "event_date", None)
+
+
+def top_three_yes_markets(markets: Iterable[object]) -> tuple[object, ...]:
+    eligible = [
+        market
+        for market in markets
+        if getattr(market.state, "accepting_orders", False)
+        and getattr(market.outcomes.yes, "token_id", None) is not None
+        and getattr(market.outcomes.yes, "price", None) is not None
+    ]
+    eligible.sort(
+        key=lambda market: Decimal(str(market.outcomes.yes.price)),
+        reverse=True,
+    )
+    return tuple(eligible[:3])
 
 
 def levels_from_book(book: object) -> tuple[AskLevel, ...]:
@@ -156,7 +157,6 @@ def quote_for_shares(
     event_slug: str,
     city: str,
     target_date: date,
-    forecast_c: Decimal,
     legs: Iterable[BasketLeg],
     shares: int,
     fee_rate: Decimal,
@@ -171,7 +171,6 @@ def quote_for_shares(
         event_slug=event_slug,
         city=city,
         target_date=target_date,
-        forecast_c=forecast_c,
         shares=shares,
         legs=filled,
         raw_cost=sum((item.raw_cost for item in filled), start=ZERO),
@@ -202,7 +201,6 @@ def dynamic_basket_quote(
     event_slug: str,
     city: str,
     target_date: date,
-    forecast_c: Decimal,
     legs: tuple[BasketLeg, ...],
     config: LiveTradingConfig,
 ) -> BasketQuote | None:
@@ -231,7 +229,6 @@ def dynamic_basket_quote(
             event_slug=event_slug,
             city=city,
             target_date=target_date,
-            forecast_c=forecast_c,
             legs=legs,
             shares=shares,
             fee_rate=config.fee_rate,
@@ -247,39 +244,6 @@ def dynamic_basket_quote(
         else:
             upper = shares - 1
     return best
-
-
-def forecast_daily_high(city: str, target_date: date, config: OpenMeteoConfig) -> Decimal:
-    geocoding_url = (
-        f"{GEOCODING_ENDPOINT}?name={urllib.parse.quote_plus(city)}&count=1&language=en&format=json"
-    )
-    geocoding = fetch_json(geocoding_url)
-    results = geocoding.get("results")
-    if not isinstance(results, list) or not results:
-        raise RuntimeError(f"Open-Meteo could not geocode weather market city {city!r}")
-    location = results[0]
-    timezone = location.get("timezone")
-    latitude = location.get("latitude")
-    longitude = location.get("longitude")
-    if timezone is None or latitude is None or longitude is None:
-        raise RuntimeError(f"Open-Meteo returned incomplete geocoding for {city!r}")
-    forecast_url = (
-        f"{config.endpoint}?latitude={latitude}&longitude={longitude}"
-        f"&daily=temperature_2m_max&timezone={timezone}"
-        f"&start_date={target_date.isoformat()}&end_date={target_date.isoformat()}"
-    )
-    payload = fetch_json(forecast_url)
-    daily = payload.get("daily")
-    if not isinstance(daily, dict):
-        raise RuntimeError(f"Open-Meteo did not return a daily forecast for {city}")
-    dates = daily.get("time")
-    values = daily.get("temperature_2m_max")
-    if not isinstance(dates, list) or not isinstance(values, list):
-        raise RuntimeError(f"Open-Meteo did not return daily maximum temperature for {city}")
-    for raw_date, value in zip(dates, values, strict=False):
-        if raw_date == target_date.isoformat() and value is not None:
-            return Decimal(str(value))
-    raise RuntimeError(f"Open-Meteo did not return {target_date} for {city}")
 
 
 async def scan_live_baskets(
@@ -320,33 +284,14 @@ async def scan_live_baskets(
                 or not event_slug
             ):
                 continue
-            try:
-                forecast_c = await asyncio.to_thread(
-                    forecast_daily_high,
-                    city,
-                    target_date,
-                    forecast_config,
-                )
-            except RuntimeError:
+            selected = top_three_yes_markets(event.markets)
+            if len(selected) != 3:
                 continue
-
-            requested_buckets = nearby_buckets(forecast_c)
-            markets_by_bucket = {
-                bucket: market
-                for market in event.markets
-                if (bucket := exact_temperature_bucket(market)) is not None
-                and getattr(market.state, "accepting_orders", False)
-                and getattr(market.outcomes.yes, "token_id", None) is not None
-            }
-            if any(bucket not in markets_by_bucket for bucket in requested_buckets):
-                continue
-
-            selected = [markets_by_bucket[bucket] for bucket in requested_buckets]
             token_ids = [str(market.outcomes.yes.token_id) for market in selected]
             books = await client.get_order_books(token_ids=token_ids)
             books_by_token = {str(book.token_id): book for book in books}
             legs: list[BasketLeg] = []
-            for bucket, market, token_id in zip(requested_buckets, selected, token_ids, strict=True):
+            for market, token_id in zip(selected, token_ids, strict=True):
                 book = books_by_token.get(token_id)
                 if book is None:
                     break
@@ -355,21 +300,20 @@ async def scan_live_baskets(
                     break
                 legs.append(
                     BasketLeg(
-                        bucket_c=bucket,
+                        label=market.group_item_title or market.question or token_id,
                         token_id=token_id,
-                        question=market.question or f"{city} {bucket}C",
+                        question=market.question or city,
                         asks=asks,
                         min_order_size=Decimal(str(book.min_order_size)),
                         tick_size=Decimal(str(book.tick_size)),
                     )
                 )
-            if len(legs) != len(requested_buckets):
+            if len(legs) != 3:
                 continue
             quote = dynamic_basket_quote(
                 event_slug=str(event_slug),
                 city=city,
                 target_date=target_date,
-                forecast_c=forecast_c,
                 legs=tuple(legs),
                 config=live_config,
             )
@@ -409,9 +353,9 @@ async def execute_live_basket(quote: BasketQuote) -> tuple[str, ...]:
                     status = "accepted then cancelled (not immediately matched)"
                 else:
                     status = response.status
-                details.append(f"{fill.leg.bucket_c}C: {status}, order={response.order_id}")
+                details.append(f"{fill.leg.label}: {status}, order={response.order_id}")
             else:
-                details.append(f"{fill.leg.bucket_c}C: rejected {response.code}: {response.message}")
+                details.append(f"{fill.leg.label}: rejected {response.code}: {response.message}")
 
         # CLOB batches submit together but are not atomic. When any leg fails,
         # a matched leg is no longer the intended temperature basket, so clear
@@ -423,7 +367,7 @@ async def execute_live_basket(quote: BasketQuote) -> tuple[str, ...]:
                 book = await client.get_order_book(token_id=fill.leg.token_id)
                 bids = sorted(book.bids, key=lambda level: level.price, reverse=True)
                 if not bids:
-                    details.append(f"{fill.leg.bucket_c}C: residual could not be flattened (no bid)")
+                    details.append(f"{fill.leg.label}: residual could not be flattened (no bid)")
                     continue
                 flatten = await client.place_market_order(
                     token_id=fill.leg.token_id,
@@ -433,9 +377,9 @@ async def execute_live_basket(quote: BasketQuote) -> tuple[str, ...]:
                     order_type="FOK",
                 )
                 if flatten.ok:
-                    details.append(f"{fill.leg.bucket_c}C: residual flattened, order={flatten.order_id}")
+                    details.append(f"{fill.leg.label}: residual flattened, order={flatten.order_id}")
                 else:
                     details.append(
-                        f"{fill.leg.bucket_c}C: residual flatten rejected {flatten.code}: {flatten.message}"
+                        f"{fill.leg.label}: residual flatten rejected {flatten.code}: {flatten.message}"
                     )
         return tuple(details)

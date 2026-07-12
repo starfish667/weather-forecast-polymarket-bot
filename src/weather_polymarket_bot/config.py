@@ -100,7 +100,7 @@ class LiveTradingConfig:
     def from_env(cls) -> "LiveTradingConfig":
         load_dotenv()
         max_raw_basket_cost = decimal_env("LIVE_MAX_RAW_BASKET_COST", "0.80")
-        max_basket_usd = decimal_env("LIVE_MAX_BASKET_USD", "5")
+        max_basket_usd = decimal_env("LIVE_MAX_BASKET_USD", "50")
         fee_rate = decimal_env("LIVE_WEATHER_FEE_RATE", "0.05")
         if not Decimal("0") < max_raw_basket_cost <= Decimal("1"):
             raise RuntimeError("LIVE_MAX_RAW_BASKET_COST must be greater than 0 and at most 1")

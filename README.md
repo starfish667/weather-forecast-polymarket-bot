@@ -75,9 +75,9 @@ This is forecast-skill validation, not trading PnL: Polymarket historical asks, 
 
 ## Live Weather Baskets
 
-`live-round` discovers active Polymarket Weather events for today and the next two days, forecasts each event city, and evaluates the exact rounded Celsius bucket plus its neighbors. It buys only when the three YES legs have a combined raw VWAP of at most `80c`.
+`live-round` discovers active Polymarket Weather events for today and the next two days. For each configured city, it ranks all tradable outcomes by Polymarket's displayed YES probability and selects only the top three. It buys only when those three YES legs have a combined raw VWAP of at most `80c`.
 
-Shares are dynamic but equal across the three legs. The scanner selects the largest integer number of shares that can be filled from the current ask ladders while keeping the full basket cost at or below `$5`. Each marketable BUY leg must be at least `$1`, which is a Polymarket venue requirement.
+Shares are dynamic but equal across the three legs. The scanner selects the largest integer number of shares that can be filled from the current ask ladders while keeping the full basket cost at or below `$50`. Each marketable BUY leg must be at least `$1`, which is a Polymarket venue requirement.
 
 Run a public, non-trading scan:
 
