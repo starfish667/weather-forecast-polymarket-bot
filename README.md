@@ -122,16 +122,14 @@ Live mode requires `POLYMARKET_PRIVATE_KEY` and optionally `POLYMARKET_WALLET_AD
 
 ```powershell
 $env:PYTHONPATH = "src"
-$env:ZERO_ZERO_API_KEY = "your-0-0-pro-key"
-.\.venv\Scripts\python.exe -m weather_polymarket_bot news-review `
-  --feed "https://example.com/feed.xml"
+$env:AI_API_KEY = "your-0-0-pro-key"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot news-review
 ```
 
 For continuous monitoring, run a bounded watch while testing:
 
 ```powershell
-.\.venv\Scripts\python.exe -m weather_polymarket_bot news-watch `
-  --feed "https://example.com/feed.xml" --interval-seconds 300 --max-rounds 12
+.\.venv\Scripts\python.exe -m weather_polymarket_bot news-watch --interval-seconds 300 --max-rounds 12
 ```
 
-The monitor reviews the most active configured number of events, rather than trying to put every market into one model prompt. The LLM sees only public headlines and active event titles. It does not receive Polymarket credentials, and its output is treated as untrusted research rather than an order instruction. A failed feed is reported but does not stop the other feeds from being reviewed.
+The built-in feeds are BBC World, BBC Business, and Google News top stories; set `NEWS_FEEDS` or pass `--feed` to replace them. The monitor reviews the most active configured number of events, rather than trying to put every market into one model prompt. The LLM sees only public headlines and active event titles. It does not receive Polymarket credentials, and its output is treated as untrusted research rather than an order instruction. A failed feed is reported but does not stop the other feeds from being reviewed.

@@ -7,6 +7,11 @@ from pathlib import Path
 
 
 DEFAULT_CITIES = ("Los Angeles", "Buenos Aires", "London", "Hong Kong")
+DEFAULT_NEWS_FEEDS = (
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+)
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -132,11 +137,11 @@ class ZeroZeroConfig:
     def from_env(cls) -> "ZeroZeroConfig":
         load_dotenv()
         return cls(
-            api_key=os.getenv("ZERO_ZERO_API_KEY"),
+            api_key=os.getenv("ZERO_ZERO_API_KEY") or os.getenv("AI_API_KEY"),
             base_url=os.getenv("ZERO_ZERO_BASE_URL", "https://api.0-0.pro/v1"),
             model=os.getenv("ZERO_ZERO_MODEL", "gpt-5.5"),
             timeout_seconds=float(os.getenv("ZERO_ZERO_TIMEOUT_SECONDS", "30")),
-            news_feeds=csv_list(os.getenv("NEWS_FEEDS"), ()),
+            news_feeds=csv_list(os.getenv("NEWS_FEEDS"), DEFAULT_NEWS_FEEDS),
             max_events=int(os.getenv("AI_MONITOR_MAX_EVENTS", "50")),
             max_headlines_per_feed=int(os.getenv("AI_MONITOR_MAX_HEADLINES_PER_FEED", "20")),
         )
