@@ -100,6 +100,10 @@ def city_from_event(event: object) -> str | None:
     return match.group("city") if match else None
 
 
+def normalized_city(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def event_target_date(event: object) -> date | None:
     schedule = getattr(event, "schedule", None)
     return getattr(schedule, "event_date", None)
@@ -286,6 +290,7 @@ async def scan_live_baskets(
     today = date.today()
     latest_target = today + timedelta(days=2)
     quotes: list[BasketQuote] = []
+    allowed_cities = {normalized_city(city) for city in forecast_config.cities}
     async with AsyncPublicClient() as client:
         events = []
         for offset in range((latest_target - today).days + 1):
@@ -297,18 +302,21 @@ async def scan_live_baskets(
             )
             page = await paginator.first_page()
             events.extend(page.items)
-        events = events[: live_config.max_events]
-        for event in events:
+        selected_events = [
+            (event, city)
+            for event in events
+            if (city := city_from_event(event)) is not None
+            and normalized_city(city) in allowed_cities
+        ]
+        for event, city in selected_events[: live_config.max_events]:
             if not getattr(event.state, "active", False) or getattr(event.state, "closed", False):
                 continue
             target_date = event_target_date(event)
-            city = city_from_event(event)
             event_slug = getattr(event, "slug", None)
             if (
                 target_date is None
                 or target_date < today
                 or target_date > latest_target
-                or city is None
                 or not event_slug
             ):
                 continue
