@@ -1,1 +1,1 @@
-# The Open-Meteo MVP uses only the Python standard library.
+polymarket-client==0.1.0b18

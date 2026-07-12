@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS backtest_results (
 
 CREATE INDEX IF NOT EXISTS idx_backtest_results_run
 ON backtest_results(run_id, city, target_date);
+
+CREATE TABLE IF NOT EXISTS live_basket_executions (
+    event_slug TEXT PRIMARY KEY,
+    target_date TEXT NOT NULL,
+    city TEXT NOT NULL,
+    forecast_c TEXT NOT NULL,
+    bucket_text TEXT NOT NULL,
+    shares INTEGER NOT NULL,
+    raw_cost TEXT NOT NULL,
+    fee_cost TEXT NOT NULL,
+    all_in_cost TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -201,3 +217,50 @@ class ForecastStore:
         )
         self.connection.commit()
         return len(rows)
+
+    def claim_live_basket(
+        self,
+        *,
+        event_slug: str,
+        target_date: date,
+        city: str,
+        forecast_c: str,
+        bucket_text: str,
+        shares: int,
+        raw_cost: str,
+        fee_cost: str,
+        all_in_cost: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            INSERT OR IGNORE INTO live_basket_executions (
+                event_slug, target_date, city, forecast_c, bucket_text, shares,
+                raw_cost, fee_cost, all_in_cost, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                event_slug,
+                encode_date(target_date),
+                city,
+                forecast_c,
+                bucket_text,
+                shares,
+                raw_cost,
+                fee_cost,
+                all_in_cost,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def update_live_basket(self, *, event_slug: str, status: str, detail: str) -> None:
+        self.connection.execute(
+            """
+            UPDATE live_basket_executions
+            SET status = ?, detail = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE event_slug = ?
+            """,
+            (status, detail, event_slug),
+        )
+        self.connection.commit()

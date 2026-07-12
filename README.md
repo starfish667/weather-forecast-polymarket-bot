@@ -18,6 +18,13 @@ Copy-Item .env.example .env
 
 The MVP uses Open-Meteo, which does not require an API key. `.env` is optional; use it to change cities, forecast days, or the database path.
 
+For the Polymarket client used by `live-round`, use the project virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
 ## Forecast Round
 
 Run a sample parser round:
@@ -65,3 +72,26 @@ python -m weather_polymarket_bot backtest-month --verbose
 The backtest uses the archived `ecmwf_ifs` run from 12:00 UTC on the prior day, derives the predicted local daily maximum from its hourly values, and settles against Open-Meteo archive daily maximum temperatures. It records every city-day in SQLite and reports the three-bucket hit rate plus its empirical fair all-in basket cost before fees.
 
 This is forecast-skill validation, not trading PnL: Polymarket historical asks, fills, and fees must be joined before the `80c` entry rule can be evaluated honestly.
+
+## Live Weather Baskets
+
+`live-round` discovers active Polymarket Weather events for today and the next two days, forecasts each event city, and evaluates the exact rounded Celsius bucket plus its neighbors. It buys only when the three YES legs have a combined raw VWAP of at most `80c`.
+
+Shares are dynamic but equal across the three legs. The scanner selects the largest integer number of shares that can be filled from the current ask ladders while keeping the full basket cost at or below `$5`. Each marketable BUY leg must be at least `$1`, which is a Polymarket venue requirement.
+
+Run a public, non-trading scan:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot live-round
+```
+
+Submit live orders:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:WEATHER_BOT_ENABLE_LIVE = "1"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot live-round --live
+```
+
+Live mode requires `POLYMARKET_PRIVATE_KEY` and optionally `POLYMARKET_WALLET_ADDRESS` in the environment. No secret is read during a dry scan. The three legs are submitted together, but Polymarket does not make the batch atomic; if a leg is rejected, the bot immediately FOK-sells any matched residual leg at its then-current best bid. Executed event slugs are saved in SQLite to prevent duplicate entries.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections import defaultdict
 from datetime import date
@@ -16,6 +17,7 @@ from weather_polymarket_bot.backtest import (
     summarize,
 )
 from weather_polymarket_bot.models import BacktestResult, nearby_buckets, utc_now
+from weather_polymarket_bot.live_trading import execute_live_basket, scan_live_baskets
 from weather_polymarket_bot.open_meteo import fetch_open_meteo_round
 from weather_polymarket_bot.parser import parse_forecasts
 from weather_polymarket_bot.storage import ForecastStore
@@ -63,6 +65,7 @@ async def telegram_round(args: argparse.Namespace) -> int:
             database_path=Path(args.db),
             open_meteo=config.open_meteo,
             backtest=config.backtest,
+            live=config.live,
             telegram=config.telegram,
         )
     replies = await fetch_weather_round(config.telegram)
@@ -188,6 +191,66 @@ def backtest_month(args: argparse.Namespace) -> int:
     return 0
 
 
+async def live_round(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    quotes = await scan_live_baskets(
+        live_config=config.live,
+        forecast_config=config.open_meteo,
+    )
+    if not quotes:
+        print("No active weather basket passed the 80c depth and budget rules.")
+        return 0
+
+    max_baskets = args.max_baskets or config.live.max_baskets_per_round
+    selected = quotes[:max_baskets]
+    for quote in selected:
+        print(
+            f"candidate {quote.city} {quote.target_date} forecast={quote.forecast_c}C "
+            f"buckets={quote.bucket_text} shares={quote.shares} "
+            f"raw={quote.raw_cost_per_share:.4f} all-in={quote.all_in_cost_per_share:.4f} "
+            f"total=${quote.all_in_cost:.2f}"
+        )
+    if not args.live:
+        print("Dry run only. Add --live and WEATHER_BOT_ENABLE_LIVE=1 to submit orders.")
+        return 0
+    if os.getenv("WEATHER_BOT_ENABLE_LIVE") != "1":
+        raise RuntimeError("Refusing live execution unless WEATHER_BOT_ENABLE_LIVE=1")
+
+    db_path = Path(args.db) if args.db else config.database_path
+    submitted = 0
+    with ForecastStore(db_path) as store:
+        for quote in selected:
+            claimed = store.claim_live_basket(
+                event_slug=quote.event_slug,
+                target_date=quote.target_date,
+                city=quote.city,
+                forecast_c=str(quote.forecast_c),
+                bucket_text=quote.bucket_text,
+                shares=quote.shares,
+                raw_cost=str(quote.raw_cost),
+                fee_cost=str(quote.fee_cost),
+                all_in_cost=str(quote.all_in_cost),
+            )
+            if not claimed:
+                print(f"skip {quote.event_slug}: this event was already claimed by a live round")
+                continue
+            try:
+                details = await execute_live_basket(quote)
+            except RuntimeError as error:
+                store.update_live_basket(
+                    event_slug=quote.event_slug,
+                    status="execution-error",
+                    detail=str(error),
+                )
+                raise
+            detail = " | ".join(details)
+            status = "submitted" if all("rejected" not in item for item in details) else "partial-or-rejected"
+            store.update_live_basket(event_slug=quote.event_slug, status=status, detail=detail)
+            print(f"{quote.event_slug}: {detail}")
+            submitted += 1
+    return 0 if submitted else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weather forecast Polymarket backtest tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -226,6 +289,15 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--db", help="SQLite database path")
     backtest.add_argument("--verbose", action="store_true", help="Print every city-day result")
     backtest.set_defaults(func=backtest_month)
+
+    live = subparsers.add_parser(
+        "live-round",
+        help="Scan active weather events and submit depth-sized baskets when --live is set",
+    )
+    live.add_argument("--live", action="store_true", help="Submit real orders after all live gates pass")
+    live.add_argument("--db", help="SQLite database path for execution de-duplication")
+    live.add_argument("--max-baskets", type=int, help="Maximum eligible baskets to submit this round")
+    live.set_defaults(func=lambda args: asyncio.run(live_round(args)))
     return parser
 
 

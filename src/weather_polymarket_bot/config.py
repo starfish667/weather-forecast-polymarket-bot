@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
@@ -25,6 +26,13 @@ def csv_list(value: str | None, default: tuple[str, ...]) -> list[str]:
     if not value:
         return list(default)
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def decimal_env(name: str, default: str) -> Decimal:
+    try:
+        return Decimal(os.getenv(name, default))
+    except InvalidOperation as error:
+        raise RuntimeError(f"{name} must be a decimal number") from error
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,37 @@ class BacktestConfig:
 
 
 @dataclass(frozen=True)
+class LiveTradingConfig:
+    max_raw_basket_cost: Decimal
+    max_basket_usd: Decimal
+    fee_rate: Decimal
+    event_page_size: int
+    max_events: int
+    max_baskets_per_round: int
+
+    @classmethod
+    def from_env(cls) -> "LiveTradingConfig":
+        load_dotenv()
+        max_raw_basket_cost = decimal_env("LIVE_MAX_RAW_BASKET_COST", "0.80")
+        max_basket_usd = decimal_env("LIVE_MAX_BASKET_USD", "5")
+        fee_rate = decimal_env("LIVE_WEATHER_FEE_RATE", "0.05")
+        if not Decimal("0") < max_raw_basket_cost <= Decimal("1"):
+            raise RuntimeError("LIVE_MAX_RAW_BASKET_COST must be greater than 0 and at most 1")
+        if max_basket_usd <= 0:
+            raise RuntimeError("LIVE_MAX_BASKET_USD must be greater than 0")
+        if not Decimal("0") <= fee_rate < Decimal("1"):
+            raise RuntimeError("LIVE_WEATHER_FEE_RATE must be between 0 and 1")
+        return cls(
+            max_raw_basket_cost=max_raw_basket_cost,
+            max_basket_usd=max_basket_usd,
+            fee_rate=fee_rate,
+            event_page_size=int(os.getenv("LIVE_EVENT_PAGE_SIZE", "100")),
+            max_events=int(os.getenv("LIVE_MAX_EVENTS", "20")),
+            max_baskets_per_round=int(os.getenv("LIVE_MAX_BASKETS_PER_ROUND", "6")),
+        )
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     api_id: int | None
     api_hash: str | None
@@ -123,6 +162,7 @@ class AppConfig:
     database_path: Path
     open_meteo: OpenMeteoConfig
     backtest: BacktestConfig
+    live: LiveTradingConfig
     telegram: TelegramConfig
 
     @classmethod
@@ -132,5 +172,6 @@ class AppConfig:
             database_path=Path(os.getenv("DATABASE_PATH", "data/weather_forecasts.sqlite3")),
             open_meteo=OpenMeteoConfig.from_env(),
             backtest=BacktestConfig.from_env(),
+            live=LiveTradingConfig.from_env(),
             telegram=TelegramConfig.from_env(),
         )
