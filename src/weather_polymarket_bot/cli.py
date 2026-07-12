@@ -20,6 +20,11 @@ from weather_polymarket_bot.backtest import (
 )
 from weather_polymarket_bot.models import BacktestResult, nearby_buckets, utc_now
 from weather_polymarket_bot.live_trading import execute_live_basket, scan_live_baskets
+from weather_polymarket_bot.market_backtest import (
+    DEFAULT_RAW_THRESHOLDS,
+    run_market_backtest,
+    summarize_threshold,
+)
 from weather_polymarket_bot.open_meteo import fetch_open_meteo_round
 from weather_polymarket_bot.parser import parse_forecasts
 from weather_polymarket_bot.storage import ForecastStore
@@ -193,6 +198,64 @@ def backtest_month(args: argparse.Namespace) -> int:
     return 0
 
 
+async def market_backtest_month(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    start_date, end_date = previous_calendar_month(date.today())
+    if args.start:
+        start_date = parse_date(args.start)
+    if args.end:
+        end_date = parse_date(args.end)
+
+    report = await run_market_backtest(
+        cities=config.open_meteo.cities,
+        start_date=start_date,
+        end_date=end_date,
+        entry_hour_utc=args.entry_hour_utc,
+        lookback_hours=args.lookback_hours,
+        concurrency=args.concurrency,
+    )
+    print(
+        f"Historical market-price backtest: {start_date.isoformat()} through {end_date.isoformat()} "
+        f"for {', '.join(config.open_meteo.cities)}"
+    )
+    print(
+        f"Entry uses the latest historical YES mark in the {args.lookback_hours}h before "
+        f"{args.entry_hour_utc:02d}:00 UTC on the preceding day."
+    )
+    requested_city_days = ((end_date - start_date).days + 1) * len(config.open_meteo.cities)
+    print(
+        f"Coverage: {report.matched_events}/{requested_city_days} configured city-days had "
+        "matching Polymarket events; "
+        f"{len(report.baskets)}/{report.matched_events} had complete price marks "
+        f"({report.skipped_events} skipped)."
+    )
+    for threshold in DEFAULT_RAW_THRESHOLDS:
+        summary = summarize_threshold(report.baskets, raw_threshold=threshold)
+        print(
+            f"raw <= {threshold * 100:.0f}c: entries={summary.entries}, "
+            f"wins={summary.wins} ({summary.hit_rate:.1%}), raw=${summary.raw_cost:.2f}, "
+            f"fee=${summary.fee_cost:.2f}, payout=${summary.payout:.2f}, "
+            f"PnL=${summary.pnl:.2f}, ROI={summary.roi:.1%}"
+        )
+    if args.verbose:
+        for basket in report.baskets:
+            eligible = "/".join(
+                f"{threshold * 100:.0f}c"
+                for threshold in DEFAULT_RAW_THRESHOLDS
+                if basket.raw_cost <= threshold
+            ) or "none"
+            print(
+                f"{basket.city} {basket.target_date} {basket.labels}: raw={basket.raw_cost:.4f} "
+                f"fee={basket.fee_cost:.4f} payout={basket.payout:.0f} pnl={basket.pnl:.4f} "
+                f"thresholds={eligible}"
+            )
+    print(
+        "Rough estimate only: historical mark prices replace executable asks, and historical "
+        "order-book depth is unavailable. Actual fills can only be worse."
+    )
+    return 0
+
+
 async def live_round(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
     try:
@@ -295,6 +358,33 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--db", help="SQLite database path")
     backtest.add_argument("--verbose", action="store_true", help="Print every city-day result")
     backtest.set_defaults(func=backtest_month)
+
+    market_backtest = subparsers.add_parser(
+        "backtest-market-month",
+        help="Backtest market-top-three weather baskets using public historical price marks",
+    )
+    market_backtest.add_argument("--start", help="Override start date (YYYY-MM-DD)")
+    market_backtest.add_argument("--end", help="Override end date (YYYY-MM-DD)")
+    market_backtest.add_argument(
+        "--entry-hour-utc",
+        type=int,
+        default=12,
+        help="Entry time on the preceding UTC day (default: 12)",
+    )
+    market_backtest.add_argument(
+        "--lookback-hours",
+        type=int,
+        default=6,
+        help="Maximum historical mark staleness before entry (default: 6)",
+    )
+    market_backtest.add_argument(
+        "--concurrency",
+        type=int,
+        default=6,
+        help="Maximum simultaneous price-history requests (default: 6)",
+    )
+    market_backtest.add_argument("--verbose", action="store_true", help="Print every priced event")
+    market_backtest.set_defaults(func=lambda args: asyncio.run(market_backtest_month(args)))
 
     live = subparsers.add_parser(
         "live-round",

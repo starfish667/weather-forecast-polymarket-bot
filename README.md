@@ -73,6 +73,17 @@ The backtest uses the archived `ecmwf_ifs` run from 12:00 UTC on the prior day, 
 
 This is forecast-skill validation, not trading PnL: Polymarket historical asks, fills, and fees must be joined before the `80c` entry rule can be evaluated honestly.
 
+## Market-Price Backtest
+
+Run a rough comparison of the market-top-three rule at `80c`, `85c`, and `90c` raw basket caps:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot backtest-market-month
+```
+
+For every configured city-day, this command takes the latest public historical YES mark from the six hours before 12:00 UTC on the preceding day, chooses the three highest marks, and settles against the closed Polymarket event. Weather taker fees are included. Public historical asks and order-book depth are unavailable, so it is deliberately an optimistic rough estimate rather than an executable-fill backtest.
+
 ## Live Weather Baskets
 
 `live-round` discovers active Polymarket Weather events for today and the next two days. For each configured city, it ranks all tradable outcomes by Polymarket's displayed YES probability and selects only the top three. It buys only when those three YES legs have a combined raw VWAP of at most `80c`.
