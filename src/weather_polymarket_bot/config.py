@@ -28,6 +28,24 @@ def csv_list(value: str | None, default: tuple[str, ...]) -> list[str]:
 
 
 @dataclass(frozen=True)
+class OpenMeteoConfig:
+    cities: list[str]
+    forecast_days: int
+    daily_variable: str
+    endpoint: str
+
+    @classmethod
+    def from_env(cls) -> "OpenMeteoConfig":
+        load_dotenv()
+        return cls(
+            cities=csv_list(os.getenv("FORECAST_CITIES"), DEFAULT_CITIES),
+            forecast_days=int(os.getenv("OPEN_METEO_FORECAST_DAYS", "3")),
+            daily_variable=os.getenv("OPEN_METEO_DAILY_VARIABLE", "temperature_2m_max"),
+            endpoint=os.getenv("OPEN_METEO_ENDPOINT", "https://api.open-meteo.com/v1/forecast"),
+        )
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     api_id: int | None
     api_hash: str | None
@@ -69,6 +87,7 @@ class TelegramConfig:
 @dataclass(frozen=True)
 class AppConfig:
     database_path: Path
+    open_meteo: OpenMeteoConfig
     telegram: TelegramConfig
 
     @classmethod
@@ -76,6 +95,6 @@ class AppConfig:
         load_dotenv()
         return cls(
             database_path=Path(os.getenv("DATABASE_PATH", "data/weather_forecasts.sqlite3")),
+            open_meteo=OpenMeteoConfig.from_env(),
             telegram=TelegramConfig.from_env(),
         )
-

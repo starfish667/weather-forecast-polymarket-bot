@@ -13,19 +13,10 @@ Initial goals:
 ## Local Setup
 
 ```powershell
-python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Fill `.env` with Telegram API credentials from <https://my.telegram.org/apps>:
-
-```text
-TG_API_ID=
-TG_API_HASH=
-TG_PHONE=
-```
-
-This uses a Telegram user client because a normal Telegram bot usually cannot read or message another bot's private chat.
+The MVP uses Open-Meteo, which does not require an API key. `.env` is optional; use it to change cities, forecast days, or the database path.
 
 ## Forecast Round
 
@@ -36,14 +27,21 @@ $env:PYTHONPATH = "src"
 python -m weather_polymarket_bot parse-sample --save
 ```
 
-Run one real `@weatherscan_bot` round:
+Run one real Open-Meteo forecast round:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m weather_polymarket_bot telegram-round
+python -m weather_polymarket_bot open-meteo-round
 ```
 
-The first Telegram run may ask for the login code sent to your Telegram account. It stores a local `.session` file, which is ignored by Git.
+Show recent stored forecasts:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m weather_polymarket_bot recent
+```
+
+Open-Meteo is the default source because it has simple JSON, global city coverage, no auth flow, and both forecast and archive endpoints for later backtests. For higher precision, the next layer can add direct ECMWF/NOAA ensemble data.
 
 ## Basket Rule
 

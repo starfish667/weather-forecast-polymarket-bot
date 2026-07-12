@@ -92,7 +92,7 @@ class ForecastStore:
         cursor = self.connection.execute(
             """
             SELECT id, source, city, forecast_c, center_bucket_c, bucket_low_c,
-                   bucket_high_c, fetched_at, message_id
+                   bucket_high_c, fetched_at, target_label, message_id
             FROM forecast_observations
             ORDER BY id DESC
             LIMIT ?
@@ -100,4 +100,3 @@ class ForecastStore:
             (limit,),
         )
         return list(cursor.fetchall())
-

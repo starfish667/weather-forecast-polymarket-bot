@@ -1,2 +1,1 @@
-telethon>=1.36
-
+# The Open-Meteo MVP uses only the Python standard library.

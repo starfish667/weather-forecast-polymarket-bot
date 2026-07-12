@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Local-first weather forecast ingestion and Polymarket basket backtesting."
 requires-python = ">=3.11"
 dependencies = [
-    "telethon>=1.36",
 ]
 
 [project.optional-dependencies]
@@ -15,4 +14,3 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-

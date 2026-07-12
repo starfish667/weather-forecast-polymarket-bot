@@ -8,6 +8,7 @@ from pathlib import Path
 
 from weather_polymarket_bot.config import AppConfig
 from weather_polymarket_bot.models import nearby_buckets, utc_now
+from weather_polymarket_bot.open_meteo import fetch_open_meteo_round
 from weather_polymarket_bot.parser import parse_forecasts
 from weather_polymarket_bot.storage import ForecastStore
 from weather_polymarket_bot.telegram_fetcher import fetch_weather_round
@@ -26,10 +27,35 @@ def print_forecast(city: str, forecast_c: object, buckets: list[int]) -> None:
     print(f"{city}: {forecast_c}C -> buy-basket candidates {bucket_text}")
 
 
+def open_meteo_round(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    open_meteo = config.open_meteo
+    if args.days is not None:
+        open_meteo = type(open_meteo)(
+            cities=open_meteo.cities,
+            forecast_days=args.days,
+            daily_variable=open_meteo.daily_variable,
+            endpoint=open_meteo.endpoint,
+        )
+    db_path = Path(args.db) if args.db else config.database_path
+    forecasts = fetch_open_meteo_round(open_meteo)
+    with ForecastStore(db_path) as store:
+        ids = store.insert_many(forecasts)
+    print(f"Saved {len(ids)} Open-Meteo forecast observation(s) to {db_path}")
+    for forecast in forecasts:
+        label = f" {forecast.target_label}" if forecast.target_label else ""
+        print_forecast(f"{forecast.city}{label}", forecast.forecast_c, forecast.buckets_c)
+    return 0 if forecasts else 2
+
+
 async def telegram_round(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
     if args.db:
-        config = AppConfig(database_path=Path(args.db), telegram=config.telegram)
+        config = AppConfig(
+            database_path=Path(args.db),
+            open_meteo=config.open_meteo,
+            telegram=config.telegram,
+        )
     replies = await fetch_weather_round(config.telegram)
     forecasts = []
     for reply in replies:
@@ -73,7 +99,7 @@ def show_recent(args: argparse.Namespace) -> int:
         print(
             f"#{row['id']} {row['city']} {row['forecast_c']}C "
             f"center={row['center_bucket_c']}C basket={row['bucket_low_c']}..{row['bucket_high_c']}C "
-            f"fetched_at={row['fetched_at']}"
+            f"target={row['target_label']} fetched_at={row['fetched_at']}"
         )
     if not rows:
         print(f"No rows in {db_path}")
@@ -90,6 +116,11 @@ def bucket(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weather forecast Polymarket backtest tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    open_meteo = subparsers.add_parser("open-meteo-round", help="Fetch one forecast round from Open-Meteo")
+    open_meteo.add_argument("--db", help="SQLite database path")
+    open_meteo.add_argument("--days", type=int, help="Forecast days to request")
+    open_meteo.set_defaults(func=open_meteo_round)
 
     telegram = subparsers.add_parser("telegram-round", help="Fetch one forecast round from @weatherscan_bot")
     telegram.add_argument("--db", help="SQLite database path")
