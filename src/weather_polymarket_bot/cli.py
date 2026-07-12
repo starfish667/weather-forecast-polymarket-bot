@@ -12,6 +12,7 @@ from pathlib import Path
 from polymarket.errors import PolymarketError
 
 from weather_polymarket_bot.config import AppConfig
+from weather_polymarket_bot.dashboard import serve_dashboard
 from weather_polymarket_bot.backtest import (
     parse_date,
     previous_calendar_month,
@@ -373,6 +374,20 @@ async def news_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def web_dashboard(args: argparse.Namespace) -> int:
+    config = AppConfig.from_env()
+    feeds = args.feed or config.zero_zero.news_feeds
+    if not feeds:
+        raise RuntimeError("Provide --feed or set NEWS_FEEDS for AI news monitoring")
+    return serve_dashboard(
+        config=config.zero_zero,
+        feeds=feeds,
+        host=args.host,
+        port=args.port,
+        interval_seconds=args.interval_seconds,
+    )
+
+
 async def live_round(args: argparse.Namespace) -> int:
     config = AppConfig.from_env()
     try:
@@ -547,6 +562,16 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--interval-seconds", type=int, default=300)
     watch.add_argument("--max-rounds", type=int, help="Stop after this many review rounds")
     watch.set_defaults(func=lambda args: asyncio.run(news_watch(args)))
+
+    dashboard = subparsers.add_parser(
+        "web-dashboard",
+        help="Serve the internal AI news-research dashboard without order execution",
+    )
+    dashboard.add_argument("--feed", action="append", help="RSS or Atom feed URL; may be repeated")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8787)
+    dashboard.add_argument("--interval-seconds", type=int, default=300)
+    dashboard.set_defaults(func=web_dashboard)
 
     live = subparsers.add_parser(
         "live-round",

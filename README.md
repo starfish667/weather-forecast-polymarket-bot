@@ -133,3 +133,20 @@ For continuous monitoring, run a bounded watch while testing:
 ```
 
 The built-in feeds are BBC World, BBC Business, and Google News top stories; set `NEWS_FEEDS` or pass `--feed` to replace them. The monitor reviews the most active configured number of events, rather than trying to put every market into one model prompt. The LLM sees only public headlines and active event titles. It does not receive Polymarket credentials, and its output is treated as untrusted research rather than an order instruction. A failed feed is reported but does not stop the other feeds from being reviewed.
+
+## Internal Dashboard
+
+Serve the mobile-friendly research dashboard on the local machine:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m weather_polymarket_bot web-dashboard
+```
+
+To use it from a phone on the same LAN, bind to all interfaces. The command prints a token-protected URL; set `DASHBOARD_TOKEN` to keep the same URL across restarts.
+
+```powershell
+.\.venv\Scripts\python.exe -m weather_polymarket_bot web-dashboard --host 0.0.0.0
+```
+
+The dashboard runs the research monitor in the background and refreshes itself every ten seconds. It exposes no order, signing, or wallet capability.
